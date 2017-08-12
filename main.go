@@ -63,7 +63,6 @@ func searchFiles(api *slack.Client, searchQuery string) {
 		for _, f := range file.Matches {
 			logrus.WithFields(logrus.Fields{
 				"title":     f.Title,
-				"url":       f.URLPrivate,
 				"permalink": f.Permalink,
 				"user":      searchUser(api, f.User),
 				"channels":  searchChannel(api, f.Channels),
