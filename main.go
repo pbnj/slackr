@@ -4,16 +4,18 @@ import (
 	"flag"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/Sirupsen/logrus"
-
 	"github.com/nlopes/slack"
+	open "github.com/petermbenjamin/go-open"
 )
 
 var (
 	fileFlag      = flag.Bool("f", false, "Search Slack Files only")
 	msgFlag       = flag.Bool("m", false, "Search Slack Messages only")
 	q             = flag.String("q", "", "Search Query")
+	openFlag      = flag.Bool("open", false, "Open URLs in browser")
 	slackAPIToken = os.Getenv("SLACK_API_TOKEN")
 )
 
@@ -29,6 +31,7 @@ func main() {
 	}
 
 	api := slack.New(slackAPIToken)
+
 	if *fileFlag {
 		searchFiles(api, *q)
 	}
@@ -38,13 +41,8 @@ func main() {
 	}
 }
 
-func searchAll(api *slack.Client, searchQuery string) {
-	searchFiles(api, searchQuery)
-	searchMessages(api, searchQuery)
-}
-
 func searchFiles(api *slack.Client, searchQuery string) {
-
+	var wg sync.WaitGroup
 	files, err := api.SearchFiles(searchQuery, slack.SearchParameters{Page: 1})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
@@ -52,28 +50,36 @@ func searchFiles(api *slack.Client, searchQuery string) {
 			"query": searchQuery,
 		}).Warnf("Could not search Slack Files")
 	}
-	for n := 1; n <= files.Paging.Pages; n++ {
-		file, err := api.SearchFiles(searchQuery, slack.SearchParameters{Page: n})
-		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"page":  n,
-				"query": searchQuery,
-			}).Warnf("Could not search Slack Files")
-		}
-		for _, f := range file.Matches {
-			logrus.WithFields(logrus.Fields{
-				"title":     f.Title,
-				"permalink": f.Permalink,
-				"user":      searchUser(api, f.User),
-				"channels":  searchChannel(api, f.Channels),
-			}).Infof("File [Page: %d]", n)
-		}
-
+	for i := 1; i <= files.Paging.Pages; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			file, err := api.SearchFiles(searchQuery, slack.SearchParameters{Page: n})
+			if err != nil {
+				logrus.WithFields(logrus.Fields{
+					"page":  n,
+					"query": searchQuery,
+				}).Warnf("Could not search Slack Files")
+			}
+			for _, f := range file.Matches {
+				if *openFlag {
+					open.Open(f.Permalink)
+				} else {
+					logrus.WithFields(logrus.Fields{
+						"title":     f.Title,
+						"permalink": f.Permalink,
+						"user":      searchUser(api, f.User),
+						"channels":  searchChannel(api, f.Channels),
+					}).Infof("File %d", n)
+				}
+			}
+		}(i)
 	}
+	wg.Wait()
 }
 
-// TODO: follow pattern in searchFiles.
 func searchMessages(api *slack.Client, searchQuery string) {
+	var wg sync.WaitGroup
 	msgs, err := api.SearchMessages(searchQuery, slack.SearchParameters{Page: 1})
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
@@ -81,16 +87,32 @@ func searchMessages(api *slack.Client, searchQuery string) {
 			"query": searchQuery,
 		}).Warnf("Could not search Slack Messages")
 	}
-	for n := 1; n <= msgs.Paging.Pages; n++ {
-		msg, err := api.SearchMessages(searchQuery, slack.SearchParameters{Page: n})
-		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"page":  n,
-				"query": searchQuery,
-			}).Warnf("Could not search Slack Messages")
-		}
-		logrus.Infof("Messages [Page: %d]\n%+v\n", n, msg)
+	for i := 1; i <= msgs.Paging.Pages; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			msg, err := api.SearchMessages(searchQuery, slack.SearchParameters{Page: n})
+			if err != nil {
+				logrus.WithFields(logrus.Fields{
+					"page":  n,
+					"query": searchQuery,
+				}).Warnf("Could not search Slack Messages")
+			}
+			for _, m := range msg.Matches {
+				if *openFlag {
+					open.Open(m.Permalink)
+				} else {
+					logrus.WithFields(logrus.Fields{
+						"text":      m.Text,
+						"permalink": m.Permalink,
+						"user":      m.Username,
+						"channel":   m.Channel.Name,
+					}).Infof("Message [Page: %d]", n)
+				}
+			}
+		}(i)
 	}
+	wg.Wait()
 }
 
 func searchUser(api *slack.Client, userID string) string {
